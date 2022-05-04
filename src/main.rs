@@ -1,188 +1,183 @@
 use rand::prelude::*;
+use std::boxed::Box;
 use std::cell::RefCell;
 use std::rc::Rc;
+use ndarray::*;
 
 #[derive(Debug)]
-struct Neuron {
-    value: Box<RefCell<f32>>,
-    weights: Box<Vec<(Rc<RefCell<Neuron>>, f32)>>,
-    backprop: Box<Vec<(Rc<RefCell<Neuron>>)>>,
+struct LayerStruct {
+    vals: RefCell<Array1<f32>>,
+    weights: RefCell<Array2<f32>>,
+    next_layer: RefCell<Option<Layer>>,
+    prev_layer: RefCell<Option<Layer>>,
 }
 
-#[derive(Debug)]
-struct Layer {
-    neurons: Vec<Rc<RefCell<Neuron>>>,
-    next_layer: RefCell<Option<Rc<Layer>>>,
-}
+type Layer = Box<Rc<LayerStruct>>;
 
 #[derive(Debug)]
 struct Model {
-    start: RefCell<Rc<Layer>>,
-    end: RefCell<Rc<Layer>>,
+    inp: RefCell<Layer>,
+    out: RefCell<Layer>,
 }
 
-impl Neuron {
-    fn new() -> Neuron {
-        Neuron {
-            value: Box::new(RefCell::new(0.0)),
-            weights: Box::new(vec![]),
-            backprop: Box::new(vec![]),
-        }
-    }
-
-    fn fire(&self) {
-        for (neuron, weight) in self.weights.iter() {
-            neuron.borrow_mut().append(*self.value.borrow() * weight);
-        }
-    }
-
-    fn append(&self, inp: f32) {
-        *self.value.borrow_mut() += inp;
-    }
-
-    fn set(&self, inp: f32) {
-        self.value.replace(inp);
-    }
-}
-
-impl Layer {
-    fn new(nodes: usize) -> Rc<Layer> {
-        Rc::new(Layer {
-            neurons: (0..nodes)
-                .map(|_| Rc::new(RefCell::new(Neuron::new())))
-                .collect(),
+impl LayerStruct {
+    fn new(neurons: usize) -> Layer {
+        Box::new(Rc::new(LayerStruct {
+            vals: RefCell::new((0..neurons).map(|_| 0.0).collect()),
+            weights: RefCell::new(Array2::<f32>::zeros((0,0))),
             next_layer: RefCell::new(None),
-        })
+            prev_layer: RefCell::new(None),
+        }))
     }
 
-    fn neuron_get(&self) -> Vec<Rc<RefCell<Neuron>>> {
-        self.neurons.clone()
+    fn neuron_amt(&self) -> usize {
+        self.vals.borrow().len()
     }
 
-    fn connect(&self, b_layer: Rc<Layer>) {
-        let mut random = rand::thread_rng();
-        for b_neur in b_layer.neuron_get() {
-            for t_neur in self.neuron_get() {
-                t_neur
-                    .borrow_mut()
-                    .weights
-                    .push((b_neur.clone(), random.gen()));
-            }
-        }
-        self.next_layer.replace(Some(b_layer));
+    fn connect(&self, layer: Layer) {
+        self.next_layer.replace(Some(layer.clone()));
+        let mut rng = rand::thread_rng();
+        let mut new_weights = Array2::<f32>::zeros((layer.neuron_amt(), self.neuron_amt()));
+        new_weights.iter_mut().map(|x|*x = 2.0*rng.gen::<f32>()).collect::<()>();
+        self.weights.replace(new_weights);
     }
 
-    fn layer_size(&self) -> usize {
-        self.neurons.len()
+    fn connect_prev(&self, layer: Layer) {
+        self.prev_layer.replace(Some(layer));
     }
 
-    fn next_l(&self) -> Option<Rc<Layer>> {
-        let r = self.next_layer.borrow();
-        if let Some(real) = r.as_ref() {
-            Some(real.clone())
+    fn next_l(&self) -> Option<Layer> {
+        if let Some(layer) = self.next_layer.borrow().clone() {
+            Some(layer)
         } else {
             None
         }
     }
 
-    fn full_fire(&self) {
-        for neuron in self.neurons.iter() {
-            neuron.borrow().fire();
-        }
-        if let Some(layer) = self.next_l() {
-            layer.full_fire()
-        }
-    }
-
-    fn fill(&self, inp: &[f32]) {
-        for (neuron, val) in self.neurons.iter().zip(inp) {
-            neuron.borrow().set(*val);
+    fn prev_l(&self) -> Option<Layer> {
+        if let Some(layer) = self.prev_layer.borrow().clone() {
+            Some(layer)
+        } else {
+            None
         }
     }
 
     fn clear(&self) {
-        for neuron in self.neurons.iter() {
-            neuron.borrow().set(0.0);
+        let mut neurons = self.vals.borrow_mut();
+        for neuron in neurons.iter_mut() {
+            *neuron = 0.0;
         }
+
         if let Some(layer) = self.next_l() {
-            layer.clear()
+            layer.clear();
         }
+    }
+
+    fn fill(&self, input: &Array1<f32>) {
+        if input.len() != self.neuron_amt() {
+            panic!(
+                "input has len {} but neuron length is {}",
+                input.len(),
+                self.neuron_amt()
+            );
+        }
+
+        for (val, next) in self.vals.borrow_mut().iter_mut().zip(input) {
+            *val = *next;
+        }
+    }
+
+    fn fire(&self) {
+        if let Some(layer) = self.next_l() {
+            self.next_l().unwrap().fill(&self.vals.borrow().dot(&*self.weights.borrow()));
+            layer.fire()
+        }
+    }
+
+    fn fetch(&self) -> Array1<f32> {
+        self.vals.borrow().clone()
+    }
+
+    fn fetch_weights(&self) -> Array2<f32> {
+        self.weights.borrow().clone()
+    }
+
+    fn set_weights(&self, new_weights:Array2<f32>) {
+        self.weights.replace(new_weights);
     }
 }
 
 impl Model {
-    fn new(start: Rc<Layer>, end: Rc<Layer>) -> Model {
+    fn new(inp: Layer, out: Layer) -> Model {
+        let mut layers = vec![inp.clone()];
+        let mut curr = inp.clone();
+        while let Some(layer) = curr.next_l().clone() {
+            curr = layer.clone();
+            layers.push(layer);
+        }
+
+        let mut curr = out.clone();
+        while let Some(layer) = layers.pop() {
+            curr.connect_prev(layer.clone());
+            curr = layer;
+        }
+
         Model {
-            start: RefCell::new(start),
-            end: RefCell::new(end),
+            inp: RefCell::new(inp),
+            out: RefCell::new(out),
         }
     }
 
-    fn evaluate(&self, inp: &[f32]) -> Vec<f32> {
-        if inp.len() != self.start.borrow().layer_size() {
-            panic!(
-                "invalid size arr for first layer: expected {} but got {}",
-                self.start.borrow().layer_size(),
-                inp.len()
-            );
-        }
-
-        self.start.borrow().clear();
-        self.start.borrow().fill(inp);
-        self.start.borrow().full_fire();
-        self.end
-            .borrow()
-            .neuron_get()
+    fn predict(&self, input: &Array1<f32>) -> (Array1<f32>, f32) {
+        self.inp.borrow().fill(input);
+        self.inp.borrow().fire();
+        let preds = self.out.borrow().fetch();
+        let mse = preds
             .iter()
-            .map(|x| *(x.borrow().value.borrow()))
-            .collect()
+            .zip(input)
+            .fold(0.0, |accum, (pred, actual)| accum + (actual - pred).powi(2))
+            / preds.len() as f32;
+        (preds, mse)
     }
 
-    fn train(&self, inp: &[f32], out: &[f32]) {
-        if inp.len() != self.start.borrow().layer_size() {
-            panic!(
-                "invalid size arr for first layer: expected {} but got {}",
-                self.start.borrow().layer_size(),
-                inp.len()
-            );
+    fn train(&self, input: &Array1<f32>, output: &Array1<f32>) {
+        const LR: f32 = 0.01;
+        let mut layer_outs = vec![self.inp.borrow().clone()];
+        let mut curr = self.inp.borrow().clone();
+        while let Some(layer) = curr.next_l().clone() {
+            curr = layer.clone();
+            layer_outs.push(layer);
         }
-
-        if out.len() != self.end.borrow().layer_size() {
-            panic!(
-                "invalid size arr for last layer: expected {} but got {}",
-                self.end.borrow().layer_size(),
-                out.len()
-            );
+        let layer_outs = layer_outs;
+        let (preds, _) = self.predict(input);
+        let mut err: Array1<f32> = output - preds;
+        let mut deltas: Vec<Array1<f32>> = vec![];
+        for layer in layer_outs.iter().rev().skip(1) {
+            let delta = layer.fetch() * err;
+            if let Some(_l) = layer.prev_l() {
+                err = delta.dot(&layer.fetch_weights().t());
+            } else {
+                err = Array1::<f32>::zeros(1);
+            }
+            deltas.push(delta);
         }
-
-        self.start.borrow().clear();
-        self.start.borrow().fill(inp);
-        self.start.borrow().full_fire();
-        let pred_out: Vec<f32> = self
-            .end
-            .borrow()
-            .neuron_get()
-            .iter()
-            .map(|x| *(x.borrow().value.borrow()))
-            .collect();
-        let full_mse: f32 = pred_out.iter().zip(out).fold(0.0, |accum, (pred, actual)| {
-            accum + (actual - pred).powf(2.0)
-        }) / self.end.borrow().layer_size() as f32;
-        println!("mse: {}", full_mse);
-
-
+        let deltas = deltas;
+        for (layer, delta) in layer_outs.iter().rev().skip(1).zip(deltas) {
+            layer.set_weights(layer.fetch_weights() + (layer.fetch().t().dot(&delta) * LR));
+        }
     }
 }
 
 fn main() {
-    let layer0 = Layer::new(15);
-    let layer1 = Layer::new(5);
-    layer0.connect(layer1.clone());
-    let model = Model::new(layer0, layer1);
-    let inp = (1..16).map(|x| x as f32).collect::<Vec<f32>>();
-    let out = (0..5)
-        .map(|x| (3 * x + 3 * x + 1 + 3 * x + 2) as f32)
-        .collect::<Vec<f32>>();
-    println!("{:?}", model.evaluate(&inp));
-    model.train(&inp, &out);
+    let x = LayerStruct::new(15);
+    let y = LayerStruct::new(5);
+    x.connect(y.clone());
+    let model = Model::new(x, y);
+    let input = (1..=15).map(|x| x as f32).collect();
+    let output = (1..=5).map(|x| (x + x * 2 + x * 3) as f32 ).collect();
+    for _ in 0..100000 {
+        model.train(&input, &output);
+    }
+    println!("{:?}", model);
+    println!("{:?}", model.predict(&input));
 }
