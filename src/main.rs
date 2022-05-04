@@ -4,7 +4,6 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use ndarray::*;
 
-#[derive(Debug)]
 struct LayerStruct {
     vals: RefCell<Array1<f32>>,
     weights: RefCell<Array2<f32>>,
@@ -14,7 +13,6 @@ struct LayerStruct {
 
 type Layer = Box<Rc<LayerStruct>>;
 
-#[derive(Debug)]
 struct Model {
     inp: RefCell<Layer>,
     out: RefCell<Layer>,
@@ -38,7 +36,9 @@ impl LayerStruct {
         self.next_layer.replace(Some(layer.clone()));
         let mut rng = rand::thread_rng();
         let mut new_weights = Array2::<f32>::zeros((layer.neuron_amt(), self.neuron_amt()));
-        new_weights.iter_mut().map(|x|*x = 2.0*rng.gen::<f32>()).collect::<()>();
+        for x in new_weights.iter_mut() {
+            *x = rng.gen::<f32>() * 2.0;
+        }
         self.weights.replace(new_weights);
     }
 
@@ -89,7 +89,7 @@ impl LayerStruct {
 
     fn fire(&self) {
         if let Some(layer) = self.next_l() {
-            self.next_l().unwrap().fill(&self.vals.borrow().dot(&*self.weights.borrow()));
+            self.next_l().unwrap().fill(&self.vals.borrow().dot(&self.weights.borrow().t()));
             layer.fire()
         }
     }
@@ -129,6 +129,7 @@ impl Model {
     }
 
     fn predict(&self, input: &Array1<f32>) -> (Array1<f32>, f32) {
+        self.inp.borrow().clear();
         self.inp.borrow().fill(input);
         self.inp.borrow().fire();
         let preds = self.out.borrow().fetch();
@@ -141,7 +142,7 @@ impl Model {
     }
 
     fn train(&self, input: &Array1<f32>, output: &Array1<f32>) {
-        const LR: f32 = 0.01;
+        const LR: f32 = 0.1;
         let mut layer_outs = vec![self.inp.borrow().clone()];
         let mut curr = self.inp.borrow().clone();
         while let Some(layer) = curr.next_l().clone() {
@@ -149,35 +150,41 @@ impl Model {
             layer_outs.push(layer);
         }
         let layer_outs = layer_outs;
-        let (preds, _) = self.predict(input);
+        let (preds, mse) = self.predict(input);
+        println!("preds: {:?}\n  mse: {:?}", preds, mse);
         let mut err: Array1<f32> = output - preds;
         let mut deltas: Vec<Array1<f32>> = vec![];
-        for layer in layer_outs.iter().rev().skip(1) {
-            let delta = layer.fetch() * err;
+        for layer in layer_outs.iter().rev() {
+            let delta = layer.fetch() * err.clone();
+            println!("delta: {:?}\n  err: {:?}", delta, err);
             if let Some(_l) = layer.prev_l() {
-                err = delta.dot(&layer.fetch_weights().t());
+                err = delta.dot(&layer.prev_l().unwrap().fetch_weights());
             } else {
                 err = Array1::<f32>::zeros(1);
             }
             deltas.push(delta);
         }
         let deltas = deltas;
-        for (layer, delta) in layer_outs.iter().rev().skip(1).zip(deltas) {
-            layer.set_weights(layer.fetch_weights() + (layer.fetch().t().dot(&delta) * LR));
+        for (layer, delta) in layer_outs.iter().rev().zip(deltas) {
+            let new_weights = layer.fetch_weights() + (layer.fetch().t().dot(&delta) * LR);
+            println!("new_weights: {:?}", new_weights);
+            layer.set_weights(new_weights)
         }
+
+        println!();
     }
 }
 
 fn main() {
-    let x = LayerStruct::new(15);
-    let y = LayerStruct::new(5);
+    let x = LayerStruct::new(3);
+    let y = LayerStruct::new(1);
     x.connect(y.clone());
     let model = Model::new(x, y);
-    let input = (1..=15).map(|x| x as f32).collect();
-    let output = (1..=5).map(|x| (x + x * 2 + x * 3) as f32 ).collect();
-    for _ in 0..100000 {
+    let input = (1..=3).map(|x| x as f32).collect();
+    let output = Array1::from_vec(vec![1.0+2.0+3.0]);
+    for _ in 0..1000 {
         model.train(&input, &output);
     }
-    println!("{:?}", model);
+
     println!("{:?}", model.predict(&input));
 }
