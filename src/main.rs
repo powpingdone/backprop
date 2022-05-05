@@ -191,10 +191,15 @@ fn main() {
         .map(|(_, inpvals)| Array1::from_vec(vec![inpvals.sum() / 3.0]))
         .collect();
     for _ in 0..10 {
-    for i in 0..1000 {
-        model.train(&input[i], &output[i]);
-    }
+        for i in 0..1000 {
+            model.train(&input[i], &output[i]);
+        }
     }
 
-    println!("input: {:?}\npreds: {:?}\n real: {:?}", input[0], model.predict(&input[0]), output[0]);
+    println!(
+        "input: {:?}\npreds: {:?}\n real: {:?}",
+        input[0],
+        model.predict(&input[0]),
+        output[0]
+    );
 }
