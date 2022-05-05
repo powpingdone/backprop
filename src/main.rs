@@ -2,6 +2,7 @@ use ndarray::*;
 use rand::prelude::*;
 use std::boxed::Box;
 use std::cell::RefCell;
+use std::fmt::Debug;
 use std::rc::Rc;
 
 struct LayerStruct {
@@ -13,9 +14,16 @@ struct LayerStruct {
 
 type Layer = Box<Rc<LayerStruct>>;
 
+#[derive(Debug)]
 struct Model {
     inp: RefCell<Layer>,
     out: RefCell<Layer>,
+}
+
+impl Debug for LayerStruct {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LayerStruct").field("vals", &self.vals).field("weights", &self.weights).field("next_layer", &self.next_layer).finish()
+    }
 }
 
 impl LayerStruct {
@@ -152,13 +160,13 @@ impl Model {
             layer_outs.push(layer);
         }
         let layer_outs = layer_outs;
-        let (preds, mse) = self.predict(input);
-        println!("preds: {:?}\n  mse: {:?}\n real: {:?}", preds, mse, output);
+        let (preds, _) = self.predict(input);
+        // println!("preds: {:?}\n  mse: {:?}\n real: {:?}", preds, mse, output);
         let mut err: Array1<f32> = output - preds;
         let mut deltas: Vec<Array1<f32>> = vec![];
         for layer in layer_outs.iter().rev() {
             let delta = layer.fetch() * err.clone();
-            println!("delta: {:?}\n  err: {:?}", delta, err);
+            // println!("delta: {:?}\n  err: {:?}", delta, err);
             if let Some(_l) = layer.prev_l() {
                 err = delta.dot(&layer.prev_l().unwrap().fetch_weights());
             } else {
@@ -169,11 +177,11 @@ impl Model {
         let deltas = deltas;
         for (layer, delta) in layer_outs.iter().rev().zip(deltas) {
             let new_weights = layer.fetch_weights() + (layer.fetch().t().dot(&delta) * LR);
-            println!("new_weights: {:?}", new_weights);
+            // println!("new_weights: {:?}", new_weights);
             layer.set_weights(new_weights)
         }
 
-        println!();
+        // println!();
     }
 }
 
@@ -186,9 +194,8 @@ fn main() {
     let input: Vec<Array1<f32>> = (0..1000)
         .map(|_| Array1::from_vec((1..=3).map(|_| rng.gen::<f32>()).collect::<Vec<f32>>()))
         .collect();
-    let output: Vec<Array1<f32>> = (0..1000)
-        .zip(&input)
-        .map(|(_, inpvals)| Array1::from_vec(vec![inpvals.sum() / 3.0]))
+    let output: Vec<Array1<f32>> = input.iter()
+        .map(|inpvals| Array1::from_vec(vec![inpvals.sum() / 3.0]))
         .collect();
     for _ in 0..10 {
         for i in 0..1000 {
@@ -202,4 +209,6 @@ fn main() {
         model.predict(&input[0]),
         output[0]
     );
+
+    println!("\n{:#?}", model);
 }
