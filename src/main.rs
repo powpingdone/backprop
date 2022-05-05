@@ -1,8 +1,8 @@
+use ndarray::*;
 use rand::prelude::*;
 use std::boxed::Box;
 use std::cell::RefCell;
 use std::rc::Rc;
-use ndarray::*;
 
 struct LayerStruct {
     vals: RefCell<Array1<f32>>,
@@ -22,7 +22,7 @@ impl LayerStruct {
     fn new(neurons: usize) -> Layer {
         Box::new(Rc::new(LayerStruct {
             vals: RefCell::new((0..neurons).map(|_| 0.0).collect()),
-            weights: RefCell::new(Array2::<f32>::zeros((0,0))),
+            weights: RefCell::new(Array2::<f32>::zeros((0, 0))),
             next_layer: RefCell::new(None),
             prev_layer: RefCell::new(None),
         }))
@@ -89,7 +89,9 @@ impl LayerStruct {
 
     fn fire(&self) {
         if let Some(layer) = self.next_l() {
-            self.next_l().unwrap().fill(&self.vals.borrow().dot(&self.weights.borrow().t()));
+            self.next_l()
+                .unwrap()
+                .fill(&self.vals.borrow().dot(&self.weights.borrow().t()));
             layer.fire()
         }
     }
@@ -102,7 +104,7 @@ impl LayerStruct {
         self.weights.borrow().clone()
     }
 
-    fn set_weights(&self, new_weights:Array2<f32>) {
+    fn set_weights(&self, new_weights: Array2<f32>) {
         self.weights.replace(new_weights);
     }
 }
@@ -142,7 +144,7 @@ impl Model {
     }
 
     fn train(&self, input: &Array1<f32>, output: &Array1<f32>) {
-        const LR: f32 = 0.1;
+        const LR: f32 = 0.01;
         let mut layer_outs = vec![self.inp.borrow().clone()];
         let mut curr = self.inp.borrow().clone();
         while let Some(layer) = curr.next_l().clone() {
@@ -151,7 +153,7 @@ impl Model {
         }
         let layer_outs = layer_outs;
         let (preds, mse) = self.predict(input);
-        println!("preds: {:?}\n  mse: {:?}", preds, mse);
+        println!("preds: {:?}\n  mse: {:?}\n real: {:?}", preds, mse, output);
         let mut err: Array1<f32> = output - preds;
         let mut deltas: Vec<Array1<f32>> = vec![];
         for layer in layer_outs.iter().rev() {
@@ -180,11 +182,19 @@ fn main() {
     let y = LayerStruct::new(1);
     x.connect(y.clone());
     let model = Model::new(x, y);
-    let input = (1..=3).map(|x| x as f32).collect();
-    let output = Array1::from_vec(vec![1.0+2.0+3.0]);
-    for _ in 0..1000 {
-        model.train(&input, &output);
+    let mut rng = rand::thread_rng();
+    let input: Vec<Array1<f32>> = (0..1000)
+        .map(|_| Array1::from_vec((1..=3).map(|_| rng.gen::<f32>()).collect::<Vec<f32>>()))
+        .collect();
+    let output: Vec<Array1<f32>> = (0..1000)
+        .zip(&input)
+        .map(|(_, inpvals)| Array1::from_vec(vec![inpvals.sum() / 3.0]))
+        .collect();
+    for _ in 0..10 {
+    for i in 0..1000 {
+        model.train(&input[i], &output[i]);
+    }
     }
 
-    println!("{:?}", model.predict(&input));
+    println!("input: {:?}\npreds: {:?}\n real: {:?}", input[0], model.predict(&input[0]), output[0]);
 }
